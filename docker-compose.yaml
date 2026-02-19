@@ -1,0 +1,40 @@
+services:
+  backend:
+    # build: ./backend/
+    image: "cosmtrek/air:latest"
+    working_dir: /app
+    volumes:
+      - ./backend/:/app/
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_URI=postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - db
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - db
+networks:
+  db:
+    driver: bridge
+volumes:
+  postgres_data:
+    
