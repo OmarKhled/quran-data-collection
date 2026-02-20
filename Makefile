@@ -35,3 +35,9 @@ seed:
 .PHONY: migrate
 migrate:
 	atlas schema apply --url "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" --to "file://backend/schema.sql" --dev-url "docker://postgres/17"
+
+.PHONY: create_admin
+create_admin:
+	@read -p "Enter admin username: " username; \
+	read -s -p "Enter admin password: " password; \
+	DB_URI=$(DB_URL) ./backend/admin/admin --username "$$username" --password "$$password"

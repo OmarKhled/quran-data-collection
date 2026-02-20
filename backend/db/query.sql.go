@@ -75,6 +75,24 @@ func (q *Queries) CreateUserTask(ctx context.Context, arg CreateUserTaskParams) 
 	return err
 }
 
+const getAdminUser = `-- name: GetAdminUser :one
+SELECT id, username, password_hash FROM ADMINS
+WHERE username = $1 LIMIT 1
+`
+
+type GetAdminUserRow struct {
+	ID           int32  `json:"id"`
+	Username     string `json:"username"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) GetAdminUser(ctx context.Context, username string) (GetAdminUserRow, error) {
+	row := q.db.QueryRow(ctx, getAdminUser, username)
+	var i GetAdminUserRow
+	err := row.Scan(&i.ID, &i.Username, &i.PasswordHash)
+	return i, err
+}
+
 const getAyahs = `-- name: GetAyahs :many
 SELECT id, ayah, surah, page, text, glyphs FROM AYAHS
 `
@@ -140,6 +158,36 @@ func (q *Queries) GetTask(ctx context.Context) (GetTaskRow, error) {
 	return i, err
 }
 
+const getTaskByID = `-- name: GetTaskByID :one
+SELECT t.id, ay.surah, ay.ayah, ay.text, ay.glyphs, ay.page
+FROM TASKS t
+JOIN AYAHS ay ON t.ayah = ay.id
+WHERE t.id = $1
+`
+
+type GetTaskByIDRow struct {
+	ID     int32  `json:"id"`
+	Surah  int32  `json:"surah"`
+	Ayah   int32  `json:"ayah"`
+	Text   string `json:"text"`
+	Glyphs string `json:"glyphs"`
+	Page   int32  `json:"page"`
+}
+
+func (q *Queries) GetTaskByID(ctx context.Context, id int32) (GetTaskByIDRow, error) {
+	row := q.db.QueryRow(ctx, getTaskByID, id)
+	var i GetTaskByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Surah,
+		&i.Ayah,
+		&i.Text,
+		&i.Glyphs,
+		&i.Page,
+	)
+	return i, err
+}
+
 const getTotalDurations = `-- name: GetTotalDurations :one
 SELECT COALESCE(SUM(audio_duration), 0) AS total_duration FROM USER_TASKS
 `
@@ -163,6 +211,52 @@ func (q *Queries) GetUser(ctx context.Context, email string) (int32, error) {
 	return id, err
 }
 
+const getUserRank = `-- name: GetUserRank :one
+SELECT 
+    u.id, 
+    u.name, 
+    u.email, 
+    COALESCE(SUM(ut.audio_duration), 0)::float AS total_duration,
+    (
+        SELECT COUNT(*) + 1
+        FROM USERS u2
+        WHERE (
+            SELECT COALESCE(SUM(ut2.audio_duration), 0)
+            FROM USER_TASKS ut2
+            WHERE ut2.user_id = u2.id
+        ) > (
+            SELECT COALESCE(SUM(ut3.audio_duration), 0)
+            FROM USER_TASKS ut3
+            WHERE ut3.user_id = $1
+        )
+    )::int AS rank
+FROM USERS u
+LEFT JOIN USER_TASKS ut ON u.id = ut.user_id
+WHERE u.id = $1
+GROUP BY u.id, u.name, u.email
+`
+
+type GetUserRankRow struct {
+	ID            int32   `json:"id"`
+	Name          string  `json:"name"`
+	Email         string  `json:"email"`
+	TotalDuration float64 `json:"total_duration"`
+	Rank          int32   `json:"rank"`
+}
+
+func (q *Queries) GetUserRank(ctx context.Context, userID int32) (GetUserRankRow, error) {
+	row := q.db.QueryRow(ctx, getUserRank, userID)
+	var i GetUserRankRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.TotalDuration,
+		&i.Rank,
+	)
+	return i, err
+}
+
 const getUserTotalDuration = `-- name: GetUserTotalDuration :one
 SELECT COALESCE(SUM(audio_duration), 0) AS total_duration FROM USER_TASKS 
 WHERE user_id = $1
@@ -173,4 +267,111 @@ func (q *Queries) GetUserTotalDuration(ctx context.Context, userID int32) (inter
 	var total_duration interface{}
 	err := row.Scan(&total_duration)
 	return total_duration, err
+}
+
+const getUsersRanks = `-- name: GetUsersRanks :many
+SELECT 
+    u.id, 
+    u.name, 
+    u.email, 
+    COALESCE(SUM(ut.audio_duration), 0)::float AS total_duration,
+    RANK() OVER (ORDER BY COALESCE(SUM(ut.audio_duration), 0) DESC)::int AS rank
+FROM USERS u
+LEFT JOIN USER_TASKS ut ON u.id = ut.user_id
+GROUP BY u.id, u.name, u.email, u.created_at
+ORDER BY total_duration DESC, u.created_at ASC
+LIMIT 10
+`
+
+type GetUsersRanksRow struct {
+	ID            int32   `json:"id"`
+	Name          string  `json:"name"`
+	Email         string  `json:"email"`
+	TotalDuration float64 `json:"total_duration"`
+	Rank          int32   `json:"rank"`
+}
+
+func (q *Queries) GetUsersRanks(ctx context.Context) ([]GetUsersRanksRow, error) {
+	rows, err := q.db.Query(ctx, getUsersRanks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUsersRanksRow
+	for rows.Next() {
+		var i GetUsersRanksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.TotalDuration,
+			&i.Rank,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUsersTasks = `-- name: GetUsersTasks :many
+SELECT ut.audio_url, ut.audio_duration, ay.surah, ay.ayah, ay.text
+FROM USER_TASKS ut
+JOIN TASKS t ON ut.task_id = t.id
+JOIN AYAHS ay ON t.ayah = ay.id
+GROUP BY ut.id, t.ayah, ay.id
+ORDER BY ut.created_at DESC
+`
+
+type GetUsersTasksRow struct {
+	AudioUrl      string  `json:"audio_url"`
+	AudioDuration float64 `json:"audio_duration"`
+	Surah         int32   `json:"surah"`
+	Ayah          int32   `json:"ayah"`
+	Text          string  `json:"text"`
+}
+
+func (q *Queries) GetUsersTasks(ctx context.Context) ([]GetUsersTasksRow, error) {
+	rows, err := q.db.Query(ctx, getUsersTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GetUsersTasksRow
+	for rows.Next() {
+		var i GetUsersTasksRow
+		if err := rows.Scan(
+			&i.AudioUrl,
+			&i.AudioDuration,
+			&i.Surah,
+			&i.Ayah,
+			&i.Text,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const insertAdminUser = `-- name: InsertAdminUser :one
+INSERT INTO ADMINS (username, password_hash) VALUES ($1, $2) RETURNING id
+`
+
+type InsertAdminUserParams struct {
+	Username     string `json:"username"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) InsertAdminUser(ctx context.Context, arg InsertAdminUserParams) (int32, error) {
+	row := q.db.QueryRow(ctx, insertAdminUser, arg.Username, arg.PasswordHash)
+	var id int32
+	err := row.Scan(&id)
+	return id, err
 }

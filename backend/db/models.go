@@ -53,6 +53,13 @@ func (ns NullGender) Value() (driver.Value, error) {
 	return string(ns.Gender), nil
 }
 
+type Admin struct {
+	ID           int32            `json:"id"`
+	Username     string           `json:"username"`
+	PasswordHash string           `json:"password_hash"`
+	CreatedAt    pgtype.Timestamp `json:"created_at"`
+}
+
 type Ayah struct {
 	ID     int32  `json:"id"`
 	Ayah   int32  `json:"ayah"`

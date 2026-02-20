@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"data-collection/config"
 	"data-collection/db"
 	"data-collection/routes"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/joho/godotenv"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -16,6 +18,12 @@ import (
 
 func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+
+	err := godotenv.Load()
+	if err != nil {
+		log.Warn().Msg("couldn't loading .env file")
+	}
+
 	router := gin.Default()
 	router.SetTrustedProxies(nil)
 
@@ -33,8 +41,10 @@ func main() {
 	}
 
 	db_client := db.New(conn)
+	r2_client := config.GetR2Client()
+	log.Info().Msg("Initialized R2 client")
 
-	routes.SetupRoutes(router, db_client)
+	routes.SetupRoutes(router, db_client, r2_client)
 
 	PORT := os.Getenv("PORT")
 	if PORT == "" {
